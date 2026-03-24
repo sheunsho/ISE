@@ -26,4 +26,4 @@ build/
 .env
 
 # Datasets
-datasets/
+lab1/datasets/

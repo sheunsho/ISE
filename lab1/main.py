@@ -170,7 +170,7 @@ PROJECTS = ['tensorflow', 'pytorch', 'keras', 'incubator-mxnet', 'caffe']
 #   in the minority class.
 #
 CLASSIFIERS = {
-    'Naive Bayes (Baseline)': MultinomialNB(),
+    'Naive Bayes (Baseline)': MultinomialNB(class_prior=[0.5, 0.5]),  # balanced weights not supported, so we set priors to 0.5 each (not reflecting true imbalance)
     'SVM':                    LinearSVC(max_iter=10000, dual='auto',
                                         class_weight='balanced'),
     'Random Forest':          RandomForestClassifier(n_estimators=100, random_state=42,

@@ -1,21 +1,21 @@
 project,classifier,vs_baseline,metric,mean_diff,direction,statistic,p_value,significant
-tensorflow,SVM,Naive Bayes (Baseline),f1,0.7068,better,0.0,0.0,True
-tensorflow,Random Forest,Naive Bayes (Baseline),f1,0.2927,better,0.0,0.0,True
-tensorflow,Logistic Regression,Naive Bayes (Baseline),f1,0.6846,better,0.0,0.0,True
-tensorflow,XGBoost,Naive Bayes (Baseline),f1,0.6716,better,0.0,0.0,True
-pytorch,SVM,Naive Bayes (Baseline),f1,0.5081,better,0.0,0.0,True
-pytorch,Random Forest,Naive Bayes (Baseline),f1,0.0492,better,0.0,0.000433,True
-pytorch,Logistic Regression,Naive Bayes (Baseline),f1,0.537,better,0.0,0.0,True
-pytorch,XGBoost,Naive Bayes (Baseline),f1,0.4391,better,0.0,0.0,True
-keras,SVM,Naive Bayes (Baseline),f1,0.6383,better,0.0,0.0,True
-keras,Random Forest,Naive Bayes (Baseline),f1,0.1628,better,0.0,0.0,True
-keras,Logistic Regression,Naive Bayes (Baseline),f1,0.6467,better,0.0,0.0,True
-keras,XGBoost,Naive Bayes (Baseline),f1,0.6042,better,0.0,0.0,True
-incubator-mxnet,SVM,Naive Bayes (Baseline),f1,0.5227,better,0.0,0.0,True
-incubator-mxnet,Random Forest,Naive Bayes (Baseline),f1,0.0032,better,0.0,0.317311,False
-incubator-mxnet,Logistic Regression,Naive Bayes (Baseline),f1,0.6028,better,0.0,0.0,True
-incubator-mxnet,XGBoost,Naive Bayes (Baseline),f1,0.4605,better,0.0,0.0,True
-caffe,SVM,Naive Bayes (Baseline),f1,0.2732,better,0.0,6e-06,True
-caffe,Random Forest,Naive Bayes (Baseline),f1,0.0,worse,0.0,1.0,False
-caffe,Logistic Regression,Naive Bayes (Baseline),f1,0.36,better,0.0,3e-06,True
-caffe,XGBoost,Naive Bayes (Baseline),f1,0.3387,better,0.0,0.0,True
+tensorflow,SVM,Naive Bayes (Baseline),f1,0.6705,better,0.0,0.0,True
+tensorflow,Random Forest,Naive Bayes (Baseline),f1,0.2564,better,0.0,0.0,True
+tensorflow,Logistic Regression,Naive Bayes (Baseline),f1,0.6484,better,0.0,0.0,True
+tensorflow,XGBoost,Naive Bayes (Baseline),f1,0.6353,better,0.0,0.0,True
+pytorch,SVM,Naive Bayes (Baseline),f1,0.4848,better,0.0,0.0,True
+pytorch,Random Forest,Naive Bayes (Baseline),f1,0.0259,better,27.0,0.033971,True
+pytorch,Logistic Regression,Naive Bayes (Baseline),f1,0.5138,better,0.0,0.0,True
+pytorch,XGBoost,Naive Bayes (Baseline),f1,0.4158,better,0.0,0.0,True
+keras,SVM,Naive Bayes (Baseline),f1,0.5492,better,0.0,0.0,True
+keras,Random Forest,Naive Bayes (Baseline),f1,0.0738,better,16.0,2.1e-05,True
+keras,Logistic Regression,Naive Bayes (Baseline),f1,0.5576,better,0.0,0.0,True
+keras,XGBoost,Naive Bayes (Baseline),f1,0.5152,better,0.0,0.0,True
+incubator-mxnet,SVM,Naive Bayes (Baseline),f1,0.4738,better,0.0,0.0,True
+incubator-mxnet,Random Forest,Naive Bayes (Baseline),f1,-0.0457,worse,3.0,0.004678,True
+incubator-mxnet,Logistic Regression,Naive Bayes (Baseline),f1,0.5539,better,0.0,0.0,True
+incubator-mxnet,XGBoost,Naive Bayes (Baseline),f1,0.4116,better,1.0,0.0,True
+caffe,SVM,Naive Bayes (Baseline),f1,0.257,better,0.0,6e-06,True
+caffe,Random Forest,Naive Bayes (Baseline),f1,-0.0162,worse,0.0,0.179712,False
+caffe,Logistic Regression,Naive Bayes (Baseline),f1,0.3438,better,0.0,3e-06,True
+caffe,XGBoost,Naive Bayes (Baseline),f1,0.3225,better,1.0,0.0,True

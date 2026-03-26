@@ -9,6 +9,7 @@ Classifiers tested:
   2. Support Vector Machine (LinearSVC) — with balanced class weights
   3. Random Forest — with balanced class weights
   4. Logistic Regression — with balanced class weights
+  5. XGBoost — with scale_pos_weight to handle class imbalance
 
 Datasets: 5 DL framework projects (TensorFlow, PyTorch, Keras, MXNet, Caffe)
 Setup:    70/30 train/test split, 30 repeats per project per classifier
@@ -35,11 +36,11 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 from sklearn.base import clone
 
 # --- Classifiers ---
-# MultinomialNB is the what I will use for Naive Bayes for sparse TF-IDF features.
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.svm import LinearSVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
+from xgboost import XGBClassifier      # Gradient boosted trees — strong on imbalanced data
 
 # Statistical testing
 from scipy.stats import wilcoxon
@@ -151,24 +152,39 @@ PROJECTS = ['tensorflow', 'pytorch', 'keras', 'incubator-mxnet', 'caffe']
 # --- Classifiers to compare ---
 #
 # BASELINE: MultinomialNB with no class weighting.
-#   - This is the baseline as defined by the lab spec.
 #   - MultinomialNB doesn't support class_weight, so it stays unmodified.
 #   - It will struggle on imbalanced data (which is the whole point — we
 #     show our improved approaches handle this better).
 #
-# IMPROVED APPROACHES: All use class_weight='balanced'.
-#   - 'balanced' automatically adjusts weights inversely proportional to
-#     class frequency: weight = n_samples / (n_classes * class_count)
-#   - For Caffe (11.5% positive): positive class gets ~7.7x more weight,
-#     so the model is penalised 7.7x more for missing a real bug than
-#     for a false alarm. This forces it to actually learn the minority class
-#     instead of taking the lazy shortcut of always predicting class 0.
+# IMPROVED APPROACHES:
+#   SVM, Random Forest, Logistic Regression all use class_weight='balanced'.
+#   This automatically upweights the minority class during training.
+#
+#   XGBoost uses scale_pos_weight instead of class_weight.
+#   scale_pos_weight = (number of negative samples) / (number of positive samples)
+#   We calculate this dynamically per project inside the experiment loop,
+#   but set a reasonable default here. XGBoost is a gradient boosted ensemble
+#   that builds trees sequentially, each one correcting the errors of the last.
+#   Unlike Random Forest (which builds independent trees in parallel), this
+#   sequential correction makes XGBoost much better at learning subtle patterns
+#   in the minority class.
 #
 CLASSIFIERS = {
     'Naive Bayes (Baseline)': MultinomialNB(),
-    'SVM': LinearSVC(max_iter=10000, dual='auto', class_weight='balanced'),
-    'Random Forest': RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced'),
-    'Logistic Regression': LogisticRegression(max_iter=1000, class_weight='balanced'),
+    'SVM':                    LinearSVC(max_iter=10000, dual='auto',
+                                        class_weight='balanced'),
+    'Random Forest':          RandomForestClassifier(n_estimators=100, random_state=42,
+                                                     class_weight='balanced'),
+    'Logistic Regression':    LogisticRegression(max_iter=1000,
+                                                 class_weight='balanced'),
+    'XGBoost':                XGBClassifier(
+                                  n_estimators=100,
+                                  eval_metric='logloss',  # Suppress default metric warning
+                                  use_label_encoder=False,
+                                  random_state=42,
+                                  # scale_pos_weight is set dynamically per project
+                                  # in run_experiments() below
+                              ),
 }
 
 # --- Experiment parameters ---
@@ -187,20 +203,20 @@ WILCOXON_PATH = os.path.join(RESULTS_DIR, 'wilcoxon_tests.csv')
 # ============================================================
 # 5. MAIN EXPERIMENT LOOP
 # ============================================================
-# The core logic:
-#   For each project (5 projects):
-#     For each repeat (30 runs):
-#       1. Split data 70/30 — SAME split for ALL classifiers (fair comparison)
-#       2. Fit TF-IDF on training data ONLY, then transform both train & test
-#       3. Train each classifier on the TF-IDF training features
-#       4. Predict on the test set
-#       5. Record precision, recall, F1 for this run
+# For each project:
+#   For each of 30 random splits:
+#     - Split data 70/30 (same split for ALL classifiers — fair comparison)
+#     - Fit TF-IDF on training data only, transform both train and test
+#     - Train each classifier, predict on test set
+#     - Record precision, recall, F1 for each classifier
 #
 # KEY DESIGN DECISIONS:
 #   - random_state=run ensures all classifiers see the SAME split in each run.
 #     This is REQUIRED for the Wilcoxon paired test to be valid.
 #   - TF-IDF is fit on training data only (no data leakage from test set).
 #   - clone() creates a fresh untrained classifier each run.
+#   - XGBoost's scale_pos_weight is recalculated per project to match
+#     the actual class ratio in that project's dataset.
 
 def run_experiments():
     """Run all experiments and return the raw results dictionary."""
@@ -221,6 +237,24 @@ def run_experiments():
 
         # Load and preprocess data for this project
         texts, labels = load_project_data(project)
+
+        # --- Calculate class imbalance ratio for XGBoost ---
+        # scale_pos_weight = count(negative) / count(positive)
+        # This tells XGBoost how much more to penalise missing a positive sample.
+        # e.g., Caffe: 253/33 ≈ 7.67 → missing a bug is 7.67x more costly
+        n_pos = labels.sum()
+        n_neg = len(labels) - n_pos
+        imbalance_ratio = n_neg / n_pos
+        print(f"  Class imbalance ratio (neg/pos): {imbalance_ratio:.2f}")
+
+        # Update the XGBoost classifier's scale_pos_weight for this project
+        CLASSIFIERS['XGBoost'] = XGBClassifier(
+            n_estimators=100,
+            eval_metric='logloss',
+            use_label_encoder=False,
+            random_state=42,
+            scale_pos_weight=imbalance_ratio,
+        )
 
         for run in range(NUM_REPEATS):
             # --- 70/30 train-test split ---
@@ -251,9 +285,8 @@ def run_experiments():
 
                 # --- Metrics ---
                 # Binary classification: positive class = 1 (performance bug)
-                # The lab spec asks for precision, recall, F1.
-                # We do NOT use 'macro' average — binary is correct for 2-class problems
-                # where we care about detecting the positive (minority) class.
+                # We use binary (default) not macro — we care about detecting
+                # the positive (minority) class specifically.
                 p  = precision_score(y_test, y_pred, zero_division=0)
                 r  = recall_score(y_test, y_pred, zero_division=0)
                 f1 = f1_score(y_test, y_pred, zero_division=0)
@@ -279,8 +312,6 @@ def save_raw_results(results):
     Save EVERY individual run score to CSV.
     This is your reproducibility evidence — the marker can verify
     any number in your report from this file.
-
-    Output: one row per (classifier, project, run) with precision, recall, f1.
     """
     rows = []
     for clf_name in CLASSIFIERS:
@@ -349,20 +380,13 @@ def print_summary_table(results):
 # ============================================================
 # 7. STATISTICAL TESTING — WILCOXON SIGNED-RANK TEST
 # ============================================================
-# For each project, we compare each improved classifier against
+# For each project, compare each improved classifier against
 # the baseline (Naive Bayes) on their 30 paired F1 scores.
 #
 # WHY WILCOXON?
 #   - Non-parametric: doesn't assume F1 scores follow a normal distribution
-#   - Paired: each of the 30 runs uses the SAME train/test split for both
-#     classifiers, so the scores are naturally paired
+#   - Paired: each of the 30 runs uses the SAME split for both classifiers
 #   - Standard practice in SE research for this kind of comparison
-#
-# HOW TO READ THE RESULTS:
-#   - p-value < 0.05 → difference is statistically significant (not just luck)
-#   - p-value >= 0.05 → can't conclude there's a real difference
-#   - mean_diff > 0 → the improved classifier is BETTER than baseline
-#   - mean_diff < 0 → the improved classifier is WORSE than baseline
 
 BASELINE_NAME = 'Naive Bayes (Baseline)'
 
@@ -384,20 +408,17 @@ def run_wilcoxon_tests(results):
 
         for clf_name in CLASSIFIERS:
             if clf_name == BASELINE_NAME:
-                continue  # Don't test baseline against itself
+                continue
 
             clf_f1 = results[clf_name][project]['f1']
 
-            # Direction: positive mean_diff = our classifier is better
             mean_diff = np.mean(clf_f1) - np.mean(baseline_f1)
             direction = "better" if mean_diff > 0 else "worse"
 
-            # Run the Wilcoxon test on the 30 paired F1 scores
             try:
                 stat, p_value = wilcoxon(clf_f1, baseline_f1)
                 significant = "YES" if p_value < ALPHA else "no"
             except ValueError:
-                # Happens if all 30 paired differences are exactly zero
                 stat, p_value = 0, 1.0
                 significant = "no (identical)"
 
@@ -425,32 +446,29 @@ def run_wilcoxon_tests(results):
 # ============================================================
 # 8. VISUALISATION — BOX PLOTS
 # ============================================================
-# Box plots show the DISTRIBUTION of F1 scores across 30 runs,
-# not just the average. They reveal variance, outliers, and spread.
-# Much more informative than a simple bar chart.
-# The marking criteria says "at least one proper figure" — this
-# gives you one per project (5 total).
+# Box plots show the DISTRIBUTION of F1 scores across 30 runs.
+# They reveal variance, outliers, and spread — much more informative
+# than a bar chart showing just the average.
 
 def plot_results(results):
     """Generate F1 box plots comparing classifiers, one figure per project."""
 
     for project in PROJECTS:
-        fig, ax = plt.subplots(figsize=(8, 5))
+        fig, ax = plt.subplots(figsize=(10, 5))
 
         # Gather F1 score lists for each classifier
         data_to_plot = []
         tick_labels = []
         for clf_name in CLASSIFIERS:
             data_to_plot.append(results[clf_name][project]['f1'])
-            # Shorten the label for the plot
             short_name = clf_name.replace(' (Baseline)', '\n(Baseline)')
             tick_labels.append(short_name)
 
         # Draw the box plot
         bp = ax.boxplot(data_to_plot, tick_labels=tick_labels, patch_artist=True)
 
-        # Colour the boxes: grey for baseline, coloured for the rest
-        colors = ['#CCCCCC', '#4C72B0', '#55A868', '#C44E52']
+        # Colour the boxes: grey for baseline, distinct colours for each approach
+        colors = ['#CCCCCC', '#4C72B0', '#55A868', '#C44E52', '#8172B2']
         for patch, color in zip(bp['boxes'], colors):
             patch.set_facecolor(color)
             patch.set_alpha(0.7)
@@ -474,24 +492,18 @@ def plot_results(results):
 # ============================================================
 
 if __name__ == '__main__':
-    # Create output directories if they don't exist
     os.makedirs(RESULTS_DIR, exist_ok=True)
     os.makedirs(FIGURES_DIR, exist_ok=True)
 
-    # --- Run the experiments ---
     print("Starting experiments...")
     print(f"Config: {NUM_REPEATS} repeats, {TEST_SIZE:.0%} test split, "
           f"{len(CLASSIFIERS)} classifiers, {len(PROJECTS)} projects")
     results = run_experiments()
 
-    # --- Save raw data and print summary table ---
     save_raw_results(results)
     print_summary_table(results)
-
-    # --- Run statistical tests ---
     run_wilcoxon_tests(results)
 
-    # --- Generate box plot figures ---
     print("\nGenerating figures...")
     plot_results(results)
 

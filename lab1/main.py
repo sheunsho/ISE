@@ -35,9 +35,7 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 from sklearn.base import clone
 
 # --- Classifiers ---
-# MultinomialNB is the CORRECT Naive Bayes for sparse TF-IDF features.
-# The lecturer's code used GaussianNB, which assumes features are normally
-# distributed — that's wrong for word frequency data.
+# MultinomialNB is the what I will use for Naive Bayes for sparse TF-IDF features.
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.svm import LinearSVC
 from sklearn.ensemble import RandomForestClassifier
@@ -168,12 +166,9 @@ PROJECTS = ['tensorflow', 'pytorch', 'keras', 'incubator-mxnet', 'caffe']
 #
 CLASSIFIERS = {
     'Naive Bayes (Baseline)': MultinomialNB(),
-    'SVM':                    LinearSVC(max_iter=10000, dual='auto',
-                                        class_weight='balanced'),
-    'Random Forest':          RandomForestClassifier(n_estimators=100, random_state=42,
-                                                     class_weight='balanced'),
-    'Logistic Regression':    LogisticRegression(max_iter=1000,
-                                                 class_weight='balanced'),
+    'SVM': LinearSVC(max_iter=10000, dual='auto', class_weight='balanced'),
+    'Random Forest': RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced'),
+    'Logistic Regression': LogisticRegression(max_iter=1000, class_weight='balanced'),
 }
 
 # --- Experiment parameters ---

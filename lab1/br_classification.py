@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import re
 import math
+import nltk
 
 # Text and feature engineering
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -17,7 +18,7 @@ from sklearn.metrics import (accuracy_score, precision_score, recall_score,
 from sklearn.naive_bayes import GaussianNB
 
 # Text cleaning & stopwords
-import nltk
+
 nltk.download('stopwords')
 from nltk.corpus import stopwords
 
@@ -61,7 +62,6 @@ def clean_str(string):
     string = re.sub(r"\?", " ? ", string)
     string = re.sub(r"\s{2,}", " ", string)
     string = re.sub(r"\\", "", string)
-    string = re.sub(r"\'", "", string)
     string = re.sub(r"\"", "", string)
     return string.strip().lower()
 
@@ -70,7 +70,7 @@ import os
 import subprocess
 # Choose the project (options: 'pytorch', 'tensorflow', 'keras', 'incubator-mxnet', 'caffe')
 project = 'pytorch'
-path = f'{project}.csv'
+path = f'datasets/{project}.csv'
 
 pd_all = pd.read_csv(path)
 pd_all = pd_all.sample(frac=1, random_state=999)  # Shuffle
@@ -87,20 +87,20 @@ pd_tplusb = pd_all.rename(columns={
     "class": "sentiment",
     "Title+Body": "text"
 })
-pd_tplusb.to_csv('Title+Body.csv', index=False, columns=["id", "Number", "sentiment", "text"])
+pd_tplusb.to_csv('datasets/Title+Body.csv', index=False, columns=["id", "Number", "sentiment", "text"])
 
 ########## 4. Configure parameters & Start training ##########
 
 # ========== Key Configurations ==========
 
 # 1) Data file to read
-datafile = 'Title+Body.csv'
+datafile = 'datasets/Title+Body.csv'
 
 # 2) Number of repeated experiments
 REPEAT = 10
 
 # 3) Output CSV file name
-out_csv_name = f'../{project}_NB.csv'
+out_csv_name = f'datasets/{project}_NB.csv'
 
 # ========== Read and clean data ==========
 data = pd.read_csv(datafile).fillna('')
@@ -146,8 +146,8 @@ for repeated_time in range(REPEAT):
         ngram_range=(1, 2),
         max_features=1000  # Adjust as needed
     )
-    X_train = tfidf.fit_transform(train_text)
-    X_test = tfidf.transform(test_text)
+    X_train = tfidf.fit_transform(train_text).toarray()
+    X_test = tfidf.transform(test_text).toarray()
    
     # --- 4.3 Naive Bayes model & GridSearch ---
     clf = GaussianNB()

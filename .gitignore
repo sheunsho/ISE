@@ -24,6 +24,3 @@ build/
 
 # Environment variables
 .env
-
-# Datasets
-lab1/datasets/

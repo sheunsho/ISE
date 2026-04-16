@@ -5,7 +5,7 @@ This script compares multiple classifiers against the Naive Bayes + TF-IDF
 baseline for classifying GitHub bug reports as performance-related (1) or not (0).
 
 Classifiers tested:
-  1. Naive Bayes (MultinomialNB) — BASELINE (no class weighting available)
+  1. Naive Bayes (MultinomialNB) — BASELINE (uniform class prior)
   2. Support Vector Machine (LinearSVC) — with balanced class weights
   3. Random Forest — with balanced class weights
   4. Logistic Regression — with balanced class weights
@@ -151,10 +151,12 @@ PROJECTS = ['tensorflow', 'pytorch', 'keras', 'incubator-mxnet', 'caffe']
 
 # --- Classifiers to compare ---
 #
-# BASELINE: MultinomialNB with no class weighting.
-#   - MultinomialNB doesn't support class_weight, so it stays unmodified.
-#   - It will struggle on imbalanced data (which is the whole point — we
-#     show our improved approaches handle this better).
+# BASELINE: MultinomialNB with a uniform class prior.
+#   - MultinomialNB doesn't support class_weight, so we use class_prior=[0.5, 0.5]
+#     instead. This is the Bayesian analogue — it corrects the skewed training
+#     distribution through the prior rather than through the loss function.
+#   - Without this correction the baseline would predict the majority class
+#     almost exclusively and score F1 ≈ 0, trivialising the comparison.
 #
 # IMPROVED APPROACHES:
 #   SVM, Random Forest, Logistic Regression all use class_weight='balanced'.
@@ -170,7 +172,7 @@ PROJECTS = ['tensorflow', 'pytorch', 'keras', 'incubator-mxnet', 'caffe']
 #   in the minority class.
 #
 CLASSIFIERS = {
-    'Naive Bayes (Baseline)': MultinomialNB(class_prior=[0.5, 0.5]),  # balanced weights not supported, so we set priors to 0.5 each (not reflecting true imbalance)
+    'Naive Bayes (Baseline)': MultinomialNB(class_prior=[0.5, 0.5]),  # uniform prior is the Bayesian analogue of class weighting — counteracts the skewed training distribution
     'SVM':                    LinearSVC(max_iter=10000, dual='auto',
                                         class_weight='balanced'),
     'Random Forest':          RandomForestClassifier(n_estimators=100, random_state=42,
@@ -180,7 +182,6 @@ CLASSIFIERS = {
     'XGBoost':                XGBClassifier(
                                   n_estimators=100,
                                   eval_metric='logloss',  # Suppress default metric warning
-                                  use_label_encoder=False,
                                   random_state=42,
                                   # scale_pos_weight is set dynamically per project
                                   # in run_experiments() below
@@ -251,7 +252,6 @@ def run_experiments():
         CLASSIFIERS['XGBoost'] = XGBClassifier(
             n_estimators=100,
             eval_metric='logloss',
-            use_label_encoder=False,
             random_state=42,
             scale_pos_weight=imbalance_ratio,
         )

@@ -15,6 +15,12 @@ Datasets: 5 DL framework projects (TensorFlow, PyTorch, Keras, MXNet, Caffe)
 Setup:    70/30 train/test split, 30 repeats per project per classifier
 Metrics:  Precision, Recall, F1 (binary, positive class = 1)
 Stats:    Wilcoxon signed-rank test (α = 0.05) comparing each classifier vs baseline
+
+Two experiments are run per invocation:
+  - 'weighted': improved classifiers use class weighting (main experiment in the report).
+  - 'default':  improved classifiers use no class imbalance handling (for comparison).
+Both sets of results are written to results/; 'weighted' uses the unsuffixed filenames
+(matching the figure references in the LaTeX report), 'default' uses a '_default' suffix.
 """
 
 # ============================================================
@@ -151,42 +157,76 @@ PROJECTS = ['tensorflow', 'pytorch', 'keras', 'incubator-mxnet', 'caffe']
 
 # --- Classifiers to compare ---
 #
-# BASELINE: MultinomialNB with a uniform class prior.
+# BASELINE: MultinomialNB with a uniform class prior (used in BOTH modes).
 #   - MultinomialNB doesn't support class_weight, so we use class_prior=[0.5, 0.5]
 #     instead. This is the Bayesian analogue — it corrects the skewed training
 #     distribution through the prior rather than through the loss function.
 #   - Without this correction the baseline would predict the majority class
-#     almost exclusively and score F1 ≈ 0, trivialising the comparison.
+#     almost exclusively and score F1 ≈ 0, trivialising every comparison.
+#     This is a baseline correction (not an imbalance-handling technique),
+#     so the baseline uses it in both the 'default' and 'weighted' experiments.
 #
-# IMPROVED APPROACHES:
-#   SVM, Random Forest, Logistic Regression all use class_weight='balanced'.
-#   This automatically upweights the minority class during training.
+# IMPROVED APPROACHES — two modes:
+#   'weighted' mode — SVM, Random Forest, Logistic Regression use
+#     class_weight='balanced', which automatically upweights the minority
+#     class during training. XGBoost uses scale_pos_weight set to
+#     (negative count) / (positive count), calculated per project.
 #
-#   XGBoost uses scale_pos_weight instead of class_weight.
-#   scale_pos_weight = (number of negative samples) / (number of positive samples)
-#   We calculate this dynamically per project inside the experiment loop,
-#   but set a reasonable default here. XGBoost is a gradient boosted ensemble
-#   that builds trees sequentially, each one correcting the errors of the last.
-#   Unlike Random Forest (which builds independent trees in parallel), this
-#   sequential correction makes XGBoost much better at learning subtle patterns
-#   in the minority class.
-#
-CLASSIFIERS = {
-    'Naive Bayes (Baseline)': MultinomialNB(class_prior=[0.5, 0.5]),  # uniform prior is the Bayesian analogue of class weighting — counteracts the skewed training distribution
-    'SVM':                    LinearSVC(max_iter=10000, dual='auto',
-                                        class_weight='balanced'),
-    'Random Forest':          RandomForestClassifier(n_estimators=100, random_state=42,
-                                                     class_weight='balanced'),
-    'Logistic Regression':    LogisticRegression(max_iter=1000,
-                                                 class_weight='balanced'),
-    'XGBoost':                XGBClassifier(
-                                  n_estimators=100,
-                                  eval_metric='logloss',  # Suppress default metric warning
-                                  random_state=42,
-                                  # scale_pos_weight is set dynamically per project
-                                  # in run_experiments() below
-                              ),
-}
+#   'default' mode — no class imbalance handling on the improved classifiers.
+#     SVM/RF/LR run with class_weight=None and XGBoost runs with its library
+#     default scale_pos_weight=1. This isolates how much the class weighting
+#     itself contributes to the weighted results.
+
+def build_classifiers(mode, imbalance_ratio):
+    """
+    Build the classifier dict for the given experiment mode.
+
+    Args:
+        mode: 'weighted' or 'default'.
+        imbalance_ratio: (neg / pos) ratio for XGBoost's scale_pos_weight
+                         in weighted mode. Ignored in default mode.
+
+    Returns:
+        Dict mapping classifier name -> fresh scikit-learn / xgboost instance.
+        A new dict is built per project so XGBoost's scale_pos_weight reflects
+        that project's actual class distribution.
+    """
+    if mode == 'weighted':
+        return {
+            'Naive Bayes (Baseline)': MultinomialNB(class_prior=[0.5, 0.5]),
+            'SVM':                    LinearSVC(max_iter=10000, dual='auto',
+                                                class_weight='balanced'),
+            'Random Forest':          RandomForestClassifier(n_estimators=100,
+                                                             random_state=42,
+                                                             class_weight='balanced'),
+            'Logistic Regression':    LogisticRegression(max_iter=1000,
+                                                         class_weight='balanced'),
+            'XGBoost':                XGBClassifier(
+                                          n_estimators=100,
+                                          eval_metric='logloss',
+                                          random_state=42,
+                                          scale_pos_weight=imbalance_ratio,
+                                      ),
+        }
+    elif mode == 'default':
+        return {
+            'Naive Bayes (Baseline)': MultinomialNB(class_prior=[0.5, 0.5]),
+            'SVM':                    LinearSVC(max_iter=10000, dual='auto'),
+            'Random Forest':          RandomForestClassifier(n_estimators=100,
+                                                             random_state=42),
+            'Logistic Regression':    LogisticRegression(max_iter=1000),
+            'XGBoost':                XGBClassifier(
+                                          n_estimators=100,
+                                          eval_metric='logloss',
+                                          random_state=42,
+                                      ),
+        }
+    else:
+        raise ValueError(f"Unknown mode: {mode!r}. Expected 'default' or 'weighted'.")
+
+
+# Modes run (in order) by the main entry point.
+MODES = ['default', 'weighted']
 
 # --- Experiment parameters ---
 NUM_REPEATS = 30     # Lab spec says ~30 repeats (lecturer's code only did 10)
@@ -194,11 +234,29 @@ TEST_SIZE   = 0.3    # Lab spec says 70/30 split (lecturer's code used 80/20)
 ALPHA       = 0.05   # Significance level for Wilcoxon test
 
 # --- Output paths ---
-RESULTS_DIR   = 'results'
-FIGURES_DIR   = 'results/figures'
-RAW_CSV_PATH  = os.path.join(RESULTS_DIR, 'raw_results.csv')
-SUMMARY_PATH  = os.path.join(RESULTS_DIR, 'summary_results.csv')
-WILCOXON_PATH = os.path.join(RESULTS_DIR, 'wilcoxon_tests.csv')
+# In 'weighted' mode (the main experiment, referenced in the LaTeX report),
+# outputs use unsuffixed names: raw_results.csv, summary_results.csv,
+# wilcoxon_tests.csv, and {project}_f1_boxplot.png.
+# In 'default' mode, outputs are suffixed with '_default' so both experiments
+# coexist in results/ without overwriting.
+RESULTS_DIR = 'results'
+FIGURES_DIR = 'results/figures'
+
+
+def _output_path(filename, mode):
+    """Build an output CSV path for a given filename and mode.
+    Weighted mode → unsuffixed. Other modes → '_<mode>' suffix before extension.
+    """
+    if mode != 'weighted':
+        stem, ext = os.path.splitext(filename)
+        filename = f'{stem}_{mode}{ext}'
+    return os.path.join(RESULTS_DIR, filename)
+
+
+def _figure_path(project, mode):
+    """Build the box plot figure path for a given project and mode."""
+    suffix = '' if mode == 'weighted' else f'_{mode}'
+    return os.path.join(FIGURES_DIR, f'{project}_f1_boxplot{suffix}.png')
 
 
 # ============================================================
@@ -216,45 +274,59 @@ WILCOXON_PATH = os.path.join(RESULTS_DIR, 'wilcoxon_tests.csv')
 #     This is REQUIRED for the Wilcoxon paired test to be valid.
 #   - TF-IDF is fit on training data only (no data leakage from test set).
 #   - clone() creates a fresh untrained classifier each run.
-#   - XGBoost's scale_pos_weight is recalculated per project to match
-#     the actual class ratio in that project's dataset.
+#   - build_classifiers(mode, imbalance_ratio) is called per project, so
+#     XGBoost's scale_pos_weight in weighted mode matches that project's
+#     actual class ratio (and the mode governs whether the other classifiers
+#     use class_weight='balanced' at all).
 
-def run_experiments():
-    """Run all experiments and return the raw results dictionary."""
+def run_experiments(mode):
+    """
+    Run the experiment suite for the given mode and return raw results.
 
-    # Nested dict: results[classifier][project] = {'precision': [...], 'recall': [...], 'f1': [...]}
+    Args:
+        mode: 'weighted' (class weighting on improved classifiers) or
+              'default' (no class weighting on improved classifiers).
+
+    Returns:
+        Nested dict results[classifier][project] = {'precision': [...],
+                                                    'recall': [...],
+                                                    'f1': [...]}
+        with NUM_REPEATS values per list (one per random-state-paired run).
+    """
+    # Build a reference dict once (with dummy imbalance_ratio) purely to get
+    # classifier names for initialising the results structure. The real
+    # classifier instances are rebuilt per project inside the loop below
+    # so XGBoost's scale_pos_weight matches each project's class ratio.
+    clf_names = list(build_classifiers(mode, imbalance_ratio=1.0).keys())
     results = {
         clf_name: {
             proj: {'precision': [], 'recall': [], 'f1': []}
             for proj in PROJECTS
         }
-        for clf_name in CLASSIFIERS
+        for clf_name in clf_names
     }
 
     for project in PROJECTS:
         print(f"\n{'='*60}")
-        print(f"Project: {project}")
+        print(f"Project: {project}  [mode: {mode}]")
         print(f"{'='*60}")
 
         # Load and preprocess data for this project
         texts, labels = load_project_data(project)
 
-        # --- Calculate class imbalance ratio for XGBoost ---
-        # scale_pos_weight = count(negative) / count(positive)
-        # This tells XGBoost how much more to penalise missing a positive sample.
-        # e.g., Caffe: 253/33 ≈ 7.67 → missing a bug is 7.67x more costly
+        # --- Calculate class imbalance ratio ---
+        # scale_pos_weight = count(negative) / count(positive).
+        # Used by XGBoost in weighted mode (ignored in default mode).
+        # e.g., Caffe: 253/33 ≈ 7.67 → missing a bug is 7.67x more costly.
         n_pos = labels.sum()
         n_neg = len(labels) - n_pos
         imbalance_ratio = n_neg / n_pos
         print(f"  Class imbalance ratio (neg/pos): {imbalance_ratio:.2f}")
 
-        # Update the XGBoost classifier's scale_pos_weight for this project
-        CLASSIFIERS['XGBoost'] = XGBClassifier(
-            n_estimators=100,
-            eval_metric='logloss',
-            random_state=42,
-            scale_pos_weight=imbalance_ratio,
-        )
+        # Build fresh classifier instances for THIS project and THIS mode.
+        # A fresh dict per project means XGBoost's scale_pos_weight is
+        # re-set to the current project's ratio in weighted mode.
+        classifiers = build_classifiers(mode, imbalance_ratio)
 
         for run in range(NUM_REPEATS):
             # --- 70/30 train-test split ---
@@ -273,7 +345,7 @@ def run_experiments():
             X_test  = vectorizer.transform(X_test_text)
 
             # --- Train and evaluate each classifier on this split ---
-            for clf_name, clf_template in CLASSIFIERS.items():
+            for clf_name, clf_template in classifiers.items():
                 # clone() = fresh untrained copy (don't train on top of a previous run)
                 clf = clone(clf_template)
 
@@ -307,14 +379,15 @@ def run_experiments():
 # 6. RESULTS — SAVE & DISPLAY
 # ============================================================
 
-def save_raw_results(results):
+def save_raw_results(results, mode):
     """
     Save EVERY individual run score to CSV.
-    This is your reproducibility evidence — the marker can verify
-    any number in your report from this file.
+    This is the reproducibility evidence — the marker can verify any number
+    in the report from this file.
     """
+    out_path = _output_path('raw_results.csv', mode)
     rows = []
-    for clf_name in CLASSIFIERS:
+    for clf_name in results:
         for project in PROJECTS:
             for run_idx in range(NUM_REPEATS):
                 rows.append({
@@ -327,18 +400,20 @@ def save_raw_results(results):
                 })
 
     df = pd.DataFrame(rows)
-    df.to_csv(RAW_CSV_PATH, index=False)
-    print(f"\nRaw results saved to: {RAW_CSV_PATH}")
+    df.to_csv(out_path, index=False)
+    print(f"\nRaw results saved to: {out_path}")
     return df
 
 
-def print_summary_table(results):
+def print_summary_table(results, mode):
     """
     Print and save a summary table: mean ± std for each metric,
-    per classifier per project. This table goes directly into your report.
+    per classifier per project. This table goes directly into the report.
     """
+    out_path = _output_path('summary_results.csv', mode)
+
     print(f"\n{'='*80}")
-    print("SUMMARY RESULTS (mean ± std over 30 runs)")
+    print(f"SUMMARY RESULTS — mode: {mode}  (mean ± std over {NUM_REPEATS} runs)")
     print(f"{'='*80}")
 
     summary_rows = []
@@ -348,7 +423,7 @@ def print_summary_table(results):
         print(f"  {'Classifier':<30} {'Precision':>14} {'Recall':>14} {'F1':>14}")
         print(f"  {'-'*72}")
 
-        for clf_name in CLASSIFIERS:
+        for clf_name in results:
             scores = results[clf_name][project]
 
             p_mean,  p_std  = np.mean(scores['precision']), np.std(scores['precision'])
@@ -372,8 +447,8 @@ def print_summary_table(results):
             })
 
     df_summary = pd.DataFrame(summary_rows)
-    df_summary.to_csv(SUMMARY_PATH, index=False)
-    print(f"\nSummary saved to: {SUMMARY_PATH}")
+    df_summary.to_csv(out_path, index=False)
+    print(f"\nSummary saved to: {out_path}")
     return df_summary
 
 
@@ -391,13 +466,15 @@ def print_summary_table(results):
 BASELINE_NAME = 'Naive Bayes (Baseline)'
 
 
-def run_wilcoxon_tests(results):
+def run_wilcoxon_tests(results, mode):
     """
     Wilcoxon signed-rank test: each improved classifier vs baseline,
     per project, on F1 scores.
     """
+    out_path = _output_path('wilcoxon_tests.csv', mode)
+
     print(f"\n{'='*80}")
-    print(f"WILCOXON SIGNED-RANK TESTS (vs {BASELINE_NAME}, α = {ALPHA})")
+    print(f"WILCOXON SIGNED-RANK TESTS — mode: {mode}  (vs {BASELINE_NAME}, α = {ALPHA})")
     print(f"{'='*80}")
 
     wilcoxon_rows = []
@@ -406,7 +483,7 @@ def run_wilcoxon_tests(results):
         print(f"\n--- {project} ---")
         baseline_f1 = results[BASELINE_NAME][project]['f1']
 
-        for clf_name in CLASSIFIERS:
+        for clf_name in results:
             if clf_name == BASELINE_NAME:
                 continue
 
@@ -438,8 +515,8 @@ def run_wilcoxon_tests(results):
             })
 
     df_wilcoxon = pd.DataFrame(wilcoxon_rows)
-    df_wilcoxon.to_csv(WILCOXON_PATH, index=False)
-    print(f"\nWilcoxon results saved to: {WILCOXON_PATH}")
+    df_wilcoxon.to_csv(out_path, index=False)
+    print(f"\nWilcoxon results saved to: {out_path}")
     return df_wilcoxon
 
 
@@ -450,7 +527,7 @@ def run_wilcoxon_tests(results):
 # They reveal variance, outliers, and spread — much more informative
 # than a bar chart showing just the average.
 
-def plot_results(results):
+def plot_results(results, mode):
     """Generate F1 box plots comparing classifiers, one figure per project."""
 
     for project in PROJECTS:
@@ -459,7 +536,7 @@ def plot_results(results):
         # Gather F1 score lists for each classifier
         data_to_plot = []
         tick_labels = []
-        for clf_name in CLASSIFIERS:
+        for clf_name in results:
             data_to_plot.append(results[clf_name][project]['f1'])
             short_name = clf_name.replace(' (Baseline)', '\n(Baseline)')
             tick_labels.append(short_name)
@@ -473,13 +550,14 @@ def plot_results(results):
             patch.set_facecolor(color)
             patch.set_alpha(0.7)
 
-        ax.set_title(f'F1 Score Distribution — {project}', fontsize=13)
+        title_suffix = '' if mode == 'weighted' else f' ({mode})'
+        ax.set_title(f'F1 Score Distribution — {project}{title_suffix}', fontsize=13)
         ax.set_ylabel('F1 Score', fontsize=11)
         ax.set_xlabel('Classifier', fontsize=11)
         ax.grid(axis='y', alpha=0.3)
 
         plt.tight_layout()
-        fig_path = os.path.join(FIGURES_DIR, f'{project}_f1_boxplot.png')
+        fig_path = _figure_path(project, mode)
         fig.savefig(fig_path, dpi=150)
         plt.close(fig)
         print(f"  Saved: {fig_path}")
@@ -497,20 +575,31 @@ if __name__ == '__main__':
 
     print("Starting experiments...")
     print(f"Config: {NUM_REPEATS} repeats, {TEST_SIZE:.0%} test split, "
-          f"{len(CLASSIFIERS)} classifiers, {len(PROJECTS)} projects")
-    results = run_experiments()
+          f"{len(PROJECTS)} projects, modes: {MODES}")
 
-    save_raw_results(results)
-    print_summary_table(results)
-    run_wilcoxon_tests(results)
+    for mode in MODES:
+        print("\n" + "#" * 80)
+        print(f"#  EXPERIMENT MODE: {mode}")
+        print("#" * 80)
 
-    print("\nGenerating figures...")
-    plot_results(results)
+        results = run_experiments(mode)
+        save_raw_results(results, mode)
+        print_summary_table(results, mode)
+        run_wilcoxon_tests(results, mode)
 
-    print("\n" + "="*80)
+        print("\nGenerating figures...")
+        plot_results(results, mode)
+
+    print("\n" + "=" * 80)
     print("ALL DONE. Check the results/ directory for:")
-    print(f"  - {RAW_CSV_PATH}   (every individual run score)")
-    print(f"  - {SUMMARY_PATH}  (mean ± std table)")
-    print(f"  - {WILCOXON_PATH} (statistical test results)")
-    print(f"  - {FIGURES_DIR}/       (box plot figures)")
-    print("="*80)
+    print("  Weighted experiment (main results referenced in the report):")
+    print(f"    - {_output_path('raw_results.csv',     'weighted')}")
+    print(f"    - {_output_path('summary_results.csv', 'weighted')}")
+    print(f"    - {_output_path('wilcoxon_tests.csv',  'weighted')}")
+    print(f"    - {FIGURES_DIR}/{{project}}_f1_boxplot.png")
+    print("  Default experiment (no class weighting, for comparison):")
+    print(f"    - {_output_path('raw_results.csv',     'default')}")
+    print(f"    - {_output_path('summary_results.csv', 'default')}")
+    print(f"    - {_output_path('wilcoxon_tests.csv',  'default')}")
+    print(f"    - {FIGURES_DIR}/{{project}}_f1_boxplot_default.png")
+    print("=" * 80)
